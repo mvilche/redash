@@ -1,0 +1,77 @@
+FROM centos:7
+
+LABEL autor="Martin Vilche <mfvilche@gmail.com>" \
+      io.k8s.description="python s2i images" \
+      io.k8s.display-name="python Applications" \
+      io.openshift.tags="builder,npm,python,alpine" \
+      io.openshift.expose-services="8000" \
+      io.openshift.s2i.scripts-url="image:///usr/libexec/s2i"
+
+ENV PYTHON_VERSION=python2
+
+RUN yum install epel-release curl -y && \
+curl -sL https://rpm.nodesource.com/setup_10.x | bash - && \
+yum install $PYTHON_VERSION $PYTHON_VERSION-devel git nodejs findutils \
+openssl openssl-devel cmake \
+       automake  \
+       libxml2-devel libxslt-devel lapack-devel libffi-devel xmlsec-devel mysql-devel postgresql-devel -y
+
+
+ENV HOME=/app \
+PYTHONUNBUFFERED=1 \
+PYTHONIOENCODING=UTF-8 \
+LANG=es_ES.UTF-8 \
+LANGUAGE=es_ES.UTF-8 \
+LC_COLLATE=C \
+LC_CTYPE=es_ES.UTF-8 \
+PIP_NO_CACHE_DIR=off
+
+RUN ln -sf /usr/bin/$PYTHON_VERSION /usr/bin/python && \
+curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py &> /dev/null && \
+python get-pip.py && rm -rf python get-pip.py && \
+rm -rf /etc/localtime && touch /etc/localtime /etc/timezone && \
+mkdir /app  && \
+chown -R 1001 /app /etc/timezone /etc/localtime && \
+chgrp -R 0 /app /etc/timezone /etc/localtime && \
+chmod -R g=u /app /etc/timezone /etc/localtime
+
+WORKDIR /app
+
+ENV PATH=/app/.local/bin:$PATH \
+GIT_COMMITTER_NAME=centos \
+GIT_COMMITTER_EMAIL=centos@mail \
+REDASH_URL=https://github.com/getredash/redash.git \
+REDASH_VERSION=v8.0.0
+
+USER 1001
+
+RUN pip install --user setuptools && \ 
+pip install --user psycopg2 && \
+pip install --user mysqlclient==1.4.4
+
+
+RUN git clone -c advice.detachedHead=false -b $REDASH_VERSION $REDASH_URL /tmp/redash && cp -rf /tmp/redash/. /app && \
+rm -rf /tmp/redash
+
+RUN sed -i '/psycopg2/d' requirements.txt && \
+pip install --user -r requirements.txt
+
+RUN npm install && npm run build && \
+rm -rf node_modules/ .npm/
+
+USER root
+
+COPY s2i/bin/ /usr/libexec/s2i
+
+RUN chown -R 1001 /app /usr/libexec/s2i && \
+chgrp -R 0 /app /usr/libexec/s2i && \
+chmod -R g=u /app /usr/libexec/s2i && \
+/usr/libexec/s2i/fix /app && \
+yum autoremove -y && yum clean all && rm -rf /var/cache/yum
+
+
+USER 1001
+
+EXPOSE 5000
+
+ENTRYPOINT ["/usr/libexec/s2i/run"]
